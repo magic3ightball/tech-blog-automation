@@ -1,0 +1,4 @@
+codex_sessions_dir: /Users/hyerimjeong/.codex/sessions
+obsidian_blog_dir: /Users/hyerimjeong/Obsidian/Vault/context/blog_pipeline
+session_index_path: /Users/hyerimjeong/Documents/Automation/blog_pipeline/data/session_index.json
+max_sessions: 50
