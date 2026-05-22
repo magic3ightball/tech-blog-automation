@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import mimetypes
+import re
 import sys
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -24,7 +25,42 @@ from index_sessions import (  # noqa: E402
     load_config,
     main as rebuild_index,
     message_text,
+    normalize_preview,
+    title_from_message,
 )
+
+
+PUBLISHABLE_KEYWORDS = {
+    "automation",
+    "blog",
+    "draft",
+    "extract",
+    "mvp",
+    "obsidian",
+    "publish",
+    "strategy",
+    "workflow",
+    "구현",
+    "글감",
+    "발행",
+    "블로그",
+    "선택",
+    "자동화",
+    "전략",
+    "추출",
+    "흐름",
+}
+
+RISK_KEYWORDS = {
+    "api key",
+    "password",
+    "secret",
+    "token",
+    "계정",
+    "비밀번호",
+    "시크릿",
+    "토큰",
+}
 
 
 def json_response(handler: BaseHTTPRequestHandler, payload: object, status: int = 200) -> None:
@@ -43,6 +79,14 @@ def text_response(handler: BaseHTTPRequestHandler, text: str, status: int = 200)
     handler.send_header("Content-Length", str(len(body)))
     handler.end_headers()
     handler.wfile.write(body)
+
+
+def read_json_body(handler: BaseHTTPRequestHandler) -> dict[str, object]:
+    length = int(handler.headers.get("Content-Length", "0"))
+    if length <= 0:
+        return {}
+    body = handler.rfile.read(length).decode("utf-8")
+    return json.loads(body)
 
 
 def load_index() -> list[dict[str, object]]:
@@ -74,6 +118,153 @@ def session_messages(path: Path) -> list[dict[str, str]]:
         messages.append({"role": role, "text": text})
 
     return messages
+
+
+def candidate_score(text: str) -> int:
+    lower_text = text.lower()
+    score = sum(1 for keyword in PUBLISHABLE_KEYWORDS if keyword in lower_text)
+    if len(text) > 800:
+        score += 2
+    elif len(text) > 400:
+        score += 1
+    return score
+
+
+def risk_level(text: str) -> str:
+    lower_text = text.lower()
+    if any(keyword in lower_text for keyword in RISK_KEYWORDS):
+        return "medium"
+    return "low"
+
+
+def candidate_reason(score: int, text: str) -> str:
+    if score >= 6:
+        return "대화 안에 문제의식, 구조화, 실행 방향이 함께 있어 블로그 글감으로 쓰기 좋습니다."
+    if "?" in text:
+        return "질문에서 출발해 답변이 구조화되어 있어 짧은 설명형 글감으로 쓸 수 있습니다."
+    return "하나의 주제로 이어지는 대화 구간이라 extracted 노트 후보로 볼 수 있습니다."
+
+
+def candidate_topic_from_user_text(text: str) -> str:
+    lines = [line.strip() for line in text.splitlines()]
+    for index, line in enumerate(lines):
+        if line.startswith("## My request"):
+            for request_line in lines[index + 1 :]:
+                if request_line and not request_line.startswith("#"):
+                    return normalize_preview(request_line, 90)
+
+    for line in lines:
+        if not line or line.startswith("#") or line.startswith("<"):
+            continue
+        return normalize_preview(line, 90)
+
+    return normalize_preview(text, 90)
+
+
+def extract_candidates(entry: dict[str, object]) -> list[dict[str, object]]:
+    messages = session_messages(Path(str(entry["path"])))
+    raw_candidates: list[dict[str, object]] = []
+
+    for index, message in enumerate(messages):
+        if message["role"] != "user":
+            continue
+
+        window = messages[index : index + 4]
+        if len(window) < 2:
+            continue
+
+        combined = "\n\n".join(f'{item["role"].upper()}: {item["text"]}' for item in window)
+        score = candidate_score(combined)
+        if score < 2 and len(combined) < 500:
+            continue
+
+        topic = candidate_topic_from_user_text(message["text"]) or title_from_message(message["text"])
+        raw_candidates.append(
+            {
+                "turn_start": index + 1,
+                "turn_end": index + len(window),
+                "topic_hint": topic,
+                "summary": normalize_preview(combined, 260),
+                "why_publishable": candidate_reason(score, combined),
+                "risk_level": risk_level(combined),
+                "score": score,
+                "raw_excerpt": combined,
+            }
+        )
+
+    raw_candidates.sort(key=lambda item: int(item["score"]), reverse=True)
+    selected = raw_candidates[:3]
+
+    for index, candidate in enumerate(selected, start=1):
+        candidate["candidate_id"] = f"cand_{index:03d}"
+        candidate["source_session_id"] = entry["session_id"]
+        candidate["source_path"] = entry["path"]
+        candidate["source_date"] = str(entry.get("started_at", ""))[:10]
+        candidate["publishable"] = candidate["risk_level"] == "low"
+
+    return selected
+
+
+def slugify(value: str) -> str:
+    slug = re.sub(r"[^0-9A-Za-z가-힣]+", "_", value).strip("_").lower()
+    return slug[:48] or "session"
+
+
+def markdown_escape(value: object) -> str:
+    return str(value).replace('"', '\\"')
+
+
+def candidate_markdown(candidate: dict[str, object]) -> str:
+    title = str(candidate["topic_hint"])
+    return f"""---
+type: blog_extract
+status: extracted
+source: codex
+source_session_id: "{markdown_escape(candidate["source_session_id"])}"
+source_path: "{markdown_escape(candidate["source_path"])}"
+source_date: "{markdown_escape(candidate["source_date"])}"
+candidate_id: "{markdown_escape(candidate["candidate_id"])}"
+risk_level: "{markdown_escape(candidate["risk_level"])}"
+publishable: {str(candidate["publishable"]).lower()}
+tags:
+  - blog_pipeline
+  - codex
+---
+
+# {title}
+
+## 핵심 요약
+{candidate["summary"]}
+
+## 왜 글감인가
+{candidate["why_publishable"]}
+
+## 추출된 구간
+Turn {candidate["turn_start"]} to {candidate["turn_end"]}
+
+## 원문 구간
+````text
+{candidate["raw_excerpt"]}
+````
+
+## 다음 액션
+블로그 초안으로 변환할지 검토.
+"""
+
+
+def save_candidate(candidate: dict[str, object]) -> Path:
+    config = load_config(CONFIG_PATH)
+    obsidian_dir = Path(str(config["obsidian_blog_dir"])).expanduser()
+    extracted_dir = obsidian_dir / "extracted"
+    extracted_dir.mkdir(parents=True, exist_ok=True)
+
+    date = str(candidate["source_date"]) or "unknown_date"
+    session_id = str(candidate["source_session_id"])[:8]
+    candidate_id = str(candidate["candidate_id"])
+    slug = slugify(str(candidate["topic_hint"]))
+    path = extracted_dir / f"{date}_{session_id}_{candidate_id}_{slug}.md"
+    path.write_text(candidate_markdown(candidate), encoding="utf-8")
+    return path
 
 
 def find_session(session_id: str) -> dict[str, object] | None:
@@ -112,6 +303,35 @@ class BlogPipelineHandler(BaseHTTPRequestHandler):
         if parsed.path == "/api/reindex":
             rebuild_index()
             json_response(self, {"ok": True, "sessions": len(load_index())})
+            return
+
+        if parsed.path.startswith("/api/sessions/") and parsed.path.endswith("/extract"):
+            session_id = unquote(parsed.path.removeprefix("/api/sessions/").removesuffix("/extract"))
+            entry = find_session(session_id)
+            if not entry:
+                json_response(self, {"error": "Session not found"}, HTTPStatus.NOT_FOUND)
+                return
+
+            json_response(self, {"candidates": extract_candidates(entry)})
+            return
+
+        if parsed.path == "/api/candidates/save":
+            request = read_json_body(self)
+            session_id = str(request.get("session_id", ""))
+            candidate_id = str(request.get("candidate_id", ""))
+            entry = find_session(session_id)
+            if not entry:
+                json_response(self, {"error": "Session not found"}, HTTPStatus.NOT_FOUND)
+                return
+
+            candidates = extract_candidates(entry)
+            candidate = next((item for item in candidates if item["candidate_id"] == candidate_id), None)
+            if not candidate:
+                json_response(self, {"error": "Candidate not found"}, HTTPStatus.NOT_FOUND)
+                return
+
+            path = save_candidate(candidate)
+            json_response(self, {"ok": True, "path": str(path)})
             return
 
         json_response(self, {"error": "Not found"}, HTTPStatus.NOT_FOUND)

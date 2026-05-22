@@ -7,7 +7,8 @@ Current MVP scope:
 1. Index recent Codex session logs.
 2. Show sessions in a local browser UI.
 3. Preview a selected conversation before extraction.
-4. Use selected sessions for blog candidate extraction in the next step.
+4. Extract blog candidate sections from a selected session.
+5. Save selected candidates as Obsidian Markdown notes.
 
 The current implementation does not publish anything.
 
@@ -50,3 +51,5 @@ python3 blog_pipeline/app/server.py
 ```
 
 Then open `http://127.0.0.1:8765`.
+
+From the UI, select a session, click `Extract candidates`, then save useful candidates to Obsidian.
