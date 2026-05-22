@@ -5,10 +5,11 @@ This repository contains a local pipeline for turning selected Codex conversatio
 Current MVP scope:
 
 1. Index recent Codex session logs.
-2. Show enough metadata to choose useful sessions.
-3. Use selected sessions for blog candidate extraction in the next step.
+2. Show sessions in a local browser UI.
+3. Preview a selected conversation before extraction.
+4. Use selected sessions for blog candidate extraction in the next step.
 
-The first implementation only creates a session index. It does not publish anything.
+The current implementation does not publish anything.
 
 ## Layout
 
@@ -18,6 +19,12 @@ blog_pipeline/
     pipeline.yaml
   data/
     session_index.json
+  app/
+    server.py
+    static/
+      index.html
+      styles.css
+      app.js
   scripts/
     index_sessions.py
 ```
@@ -30,12 +37,16 @@ Obsidian output target:
 
 ## Usage
 
+Index sessions:
+
 ```sh
 python3 blog_pipeline/scripts/index_sessions.py
 ```
 
-The script reads Codex JSONL session logs and writes:
+Start the local UI:
 
-```text
-blog_pipeline/data/session_index.json
+```sh
+python3 blog_pipeline/app/server.py
 ```
+
+Then open `http://127.0.0.1:8765`.
