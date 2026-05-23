@@ -1,0 +1,30 @@
+name: Slack Archive
+
+on:
+  schedule:
+    - cron: "0 15 * * *"
+  workflow_dispatch:
+
+jobs:
+  archive:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npm run archive-slack
+        env:
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          SLACK_ARCHIVE_CHANNEL_ID: ${{ secrets.SLACK_ARCHIVE_CHANNEL_ID }}
+          SLACK_ARCHIVE_TARGET_DIR: ${{ vars.SLACK_ARCHIVE_TARGET_DIR || 'slack-archive' }}
+          SLACK_NOTIFY_CHANNEL_ID: ${{ vars.SLACK_NOTIFY_CHANNEL_ID }}
+          SLACK_NOTIFY_ON_SUCCESS: ${{ vars.SLACK_NOTIFY_ON_SUCCESS || 'true' }}
+          SLACK_NOTIFY_ON_FAILURE: ${{ vars.SLACK_NOTIFY_ON_FAILURE || 'true' }}
+          GITHUB_TOKEN: ${{ secrets.ARCHIVE_GITHUB_TOKEN }}
+          GITHUB_OWNER: ${{ vars.ARCHIVE_GITHUB_OWNER }}
+          GITHUB_REPO: ${{ vars.ARCHIVE_GITHUB_REPO }}
+          GITHUB_BRANCH: ${{ vars.ARCHIVE_GITHUB_BRANCH || 'main' }}
