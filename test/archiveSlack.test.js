@@ -116,6 +116,24 @@ test("runSlackArchive skips failure notification when disabled", async () => {
   assert.equal(notifications.length, 0);
 });
 
+test("runSlackArchive rethrows the original error when failure notification fails", async () => {
+  const failure = new Error("Slack history failed");
+
+  await assert.rejects(
+    () =>
+      runSlackArchive(baseConfig(), {
+        getRange: fixedRange,
+        fetchMessages: async () => {
+          throw failure;
+        },
+        postMessage: async () => {
+          throw new Error("Slack notification request failed: not_in_channel");
+        }
+      }),
+    failure
+  );
+});
+
 function baseConfig(overrides = {}) {
   return {
     slackBotToken: "xoxb-token",

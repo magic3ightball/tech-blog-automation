@@ -61,7 +61,11 @@ export async function runSlackArchive(config, dependencies = {}) {
     return archiveResult;
   } catch (error) {
     if (config.slackNotifyOnFailure && step !== "slack_failure_notification") {
-      step = await notifyFailure(config, postMessage, range, step, error);
+      try {
+        step = await notifyFailure(config, postMessage, range, step, error);
+      } catch (notificationError) {
+        console.warn(`Slack failure notification failed: ${notificationError.message}`);
+      }
     }
 
     throw error;
